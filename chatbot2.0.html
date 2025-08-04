@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>DoctorBot Chat</title>
+  <script src="https://sdk.amazonaws.com/js/aws-sdk-2.1194.0.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f0f4f8;
+      display: flex;
+      justify-content: center;
+      margin-top: 50px;
+    }
+    #chat-container {
+      width: 400px;
+      background: white;
+      border-radius: 10px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+      padding: 10px;
+    }
+    #messages {
+      height: 400px;
+      overflow-y: auto;
+      padding: 10px;
+      border: 1px solid #ccc;
+      margin-bottom: 10px;
+    }
+    .user, .bot {
+      margin: 10px 0;
+    }
+    .user {
+      text-align: right;
+      color: #0b93f6;
+    }
+    .bot {
+      text-align: left;
+      color: #333;
+    }
+    button {
+      background-color: #0b93f6;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 8px 12px;
+      margin: 4px 2px;
+      cursor: pointer;
+    }
+    input[type="text"] {
+      width: 75%;
+      padding: 8px;
+    }
+    #send-btn {
+      padding: 8px 12px;
+    }
+  </style>
+</head>
+<body>
+
+<div id="chat-container">
+  <div id="messages"></div>
+  <input type="text" id="user-input" placeholder="Type your message..." />
+  <button id="send-btn">Send</button>
+</div>
+
+<script>
+  // ✅ Your actual AWS details here
+  AWS.config.region = 'us-east-1'; // Replace with your region
+  AWS.config.credentials = new AWS.CognitoIdentityCredentials({
+    IdentityPoolId: 'us-east-1:b94759e4-713c-4486-bbb9-720e2f2b78ad' // Replace with your Identity Pool ID
+  });
+
+  // Initialize Lex V2 client
+  const lexruntime = new AWS.LexRuntimeV2();
+
+  // Your Lex bot details
+  const botId = 'JYECHVUIK5';       // Replace with your Lex V2 Bot ID
+  const botAliasId = 'EXLXDIKGFF';  // Replace with your Lex V2 Bot Alias ID
+  const localeId = 'en_US';         // Language
+  const sessionId = Date.now().toString(); // Unique session
+
+  const messages = document.getElementById('messages');
+  const input = document.getElementById('user-input');
+  const sendBtn = document.getElementById('send-btn');
+
+  sendBtn.onclick = sendMessage;
+  input.addEventListener('keypress', function (e) {
+    if (e.key === 'Enter') sendMessage();
+  });
+
+  function appendMessage(sender, text) {
+    const msgEl = document.createElement('div');
+    msgEl.className = sender === 'You' ? 'user' : 'bot';
+    msgEl.innerText = `${sender}: ${text}`;
+    messages.appendChild(msgEl);
+    messages.scrollTop = messages.scrollHeight;
+  }
+
+  function sendMessage() {
+    const userText = input.value.trim();
+    if (!userText) return;
+
+    appendMessage('You', userText);
+    input.value = '';
+
+    const params = {
+      botId,
+      botAliasId,
+      localeId,
+      sessionId,
+      text: userText
+    };
+
+    lexruntime.recognizeText(params, function(err, data) {
+      if (err) {
+        console.error("Error from Lex:", err);
+        appendMessage('DoctorBot', '⚠️ Error communicating with DoctorBot.');
+        return;
+      }
+
+      if (!data.messages || data.messages.length === 0) {
+        appendMessage('DoctorBot', '🤖 No response from DoctorBot.');
+        return;
+      }
+
+      let lastCardTitle = null;
+
+      data.messages.forEach(msg => {
+        if (msg.contentType === 'ImageResponseCard') {
+          const card = msg.imageResponseCard;
+
+          if (card.title) {
+            appendMessage('DoctorBot', card.title);
+            lastCardTitle = card.title;
+          }
+          if (card.subtitle) appendMessage('DoctorBot', card.subtitle);
+
+          card.buttons.forEach(btn => {
+            const buttonEl = document.createElement('button');
+            buttonEl.innerText = btn.text;
+            buttonEl.onclick = () => {
+              input.value = btn.value;
+              sendMessage();
+            };
+            messages.appendChild(buttonEl);
+          });
+        } else if (msg.contentType === 'PlainText') {
+          if (msg.content !== lastCardTitle) {
+            appendMessage('DoctorBot', msg.content);
+          }
+        }
+      });
+
+      messages.scrollTop = messages.scrollHeight;
+    });
+  }
+</script>
+
+</body>
+</html>
