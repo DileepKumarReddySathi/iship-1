@@ -1,0 +1,97 @@
+import boto3
+import uuid
+import json
+
+# S3 Config
+s3 = boto3.client('s3')
+BUCKET_NAME = 'doctor-bot-dileep-2025'     # 🔁 Replace with your bucket name
+FILE_KEY = 'appointments.json'                 # 🔁 Replace with your file name
+
+def lambda_handler(event, context):
+    try:
+        print("Received Event:")
+        print(json.dumps(event, indent=2))
+
+        # Extract slots
+        slots = (((event or {}).get('sessionState') or {}).get('intent') or {}).get('slots') or {}
+
+        patient = get_slot(slots, 'PatientName')
+        speciality = get_slot(slots, 'Speciality')
+        doctor = get_slot(slots, 'DoctorName')
+        date = get_slot(slots, 'Date')
+        time = get_slot(slots, 'Time')
+
+        # Validate all slots
+        if not all([patient, speciality, doctor, date, time]):
+            return build_response(
+                "❌ Please provide all required details: PatientName, Speciality, DoctorName, Date, and Time.",
+                intent_name="BookDoctorAppointment",
+                success=False
+            )
+
+        # Generate appointment entry
+        appointment_id = str(uuid.uuid4())
+        new_appointment = {
+            'AppointmentID': appointment_id,
+            'PatientName': patient,
+            'Speciality': speciality,
+            'DoctorName': doctor,
+            'Date': date,
+            'Time': time
+        }
+
+        # Read existing appointments from S3
+        try:
+            response = s3.get_object(Bucket=BUCKET_NAME, Key=FILE_KEY)
+            appointments = json.loads(response['Body'].read().decode('utf-8'))
+        except s3.exceptions.NoSuchKey:
+            appointments = []
+
+        # Append new appointment
+        appointments.append(new_appointment)
+
+        # Save updated list back to S3
+        s3.put_object(
+            Bucket=BUCKET_NAME,
+            Key=FILE_KEY,
+            Body=json.dumps(appointments),
+            ContentType='application/json'
+        )
+
+        # Success message
+        return build_response(
+            f"✅ Hi {patient}, your appointment with {doctor} ({speciality}) is confirmed for {date} at {time}.",
+            intent_name="BookDoctorAppointment",
+            success=True
+        )
+
+    except Exception as e:
+        return build_response(
+            f"❌ An error occurred: {str(e)}",
+            intent_name="BookDoctorAppointment",
+            success=False
+        )
+
+# Helper: extract slot value safely
+def get_slot(slots, slot_name):
+    if slot_name in slots and slots[slot_name] and 'value' in slots[slot_name]:
+        return slots[slot_name]['value'].get('interpretedValue')
+    return None
+
+# Helper: build response to Lex
+def build_response(message, intent_name, success=True):
+    return {
+        "sessionState": {
+            "dialogAction": {"type": "Close"},
+            "intent": {
+                "name": intent_name,
+                "state": "Fulfilled" if success else "Failed"
+            }
+        },
+        "messages": [
+            {
+                "contentType": "PlainText",
+                "content": message
+            }
+        ]
+    }
